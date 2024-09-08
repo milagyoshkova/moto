@@ -1,21 +1,29 @@
 import scrapy
+from dpc.spiders.base.dpc_base import DpcBaseSpider
+from dpc.items import DpcItem
+from dpc.utils import _scraping_bee_url
 
-class ProductSpider(scrapy.Spider):
+class ProductSpider(DeltaFetchBaseSpider):
     name = 'test'
     start_urls = [
         'https://motokinisi.gr/gr/krani/full-face.html'
     ]
 
     def parse(self, response):
-       
+        # Извлича всички връзки на продуктите от началната страница
         product_links = response.xpath('//a[contains(@href, "/gr/kranos-")]/@href').getall()
 
         for link in product_links:
-           
+            # Преобразува относителния URL в абсолютен
             absolute_link = response.urljoin(link)
-            yield response.follow(absolute_link, self.parse_product)
+            # Check cache before following link
+            cached_item = self.load_cached_item(absolute_link)
+            if cached_item:
+                yield cached_item
+            else:
+                yield response.follow(absolute_link, self.parse_product)
 
-      
+        # Следва линкове на следващите страници, ако има такива
         next_page = response.xpath('//a[contains(@class, "next")]/@href').get()
         if next_page:
             absolute_next_page = response.urljoin(next_page)
@@ -26,7 +34,9 @@ class ProductSpider(scrapy.Spider):
         if response.status == 200:
             self.logger.info('Page successfully loaded.')
 
-           
+            # Пробвай различни XPath селектори в зависимост от съдържанието на страницата
+
+            # Опитай с различен XPath за името на продукта
             product_name = response.xpath('/html/body/div[3]/div[1]/div[1]/ul/li[5]/span/text()').get()
             if not product_name:
                 product_name = response.xpath('/html/body/div[3]/div[1]/div[1]/ul/li[4]/span/text()').get()
@@ -38,7 +48,7 @@ class ProductSpider(scrapy.Spider):
             new_price = response.xpath('/html/body/div[3]/div[1]/div[3]/div/div[2]/div[3]/div/span[1]/span/span/span/text()').get()
             old_price = response.xpath('/html/body/div[3]/div[1]/div[3]/div/div[2]/div[3]/div/span[2]/span/span/span/text()').get()
 
-            # Проверка на друга цената, ако е налична
+            # Проверка на друга структура за цената, ако е налична
             if not new_price:
                 new_price = response.xpath('//div[contains(@class, "new-price")]/text()').get()
             if not old_price:
@@ -49,12 +59,17 @@ class ProductSpider(scrapy.Spider):
             if additional_info:
                 additional_info = additional_info.strip()
 
-            yield {
+            item = {
                 'product_name': product_name,
                 'old_price': old_price,
                 'new_price': new_price,
                 'additional_info': additional_info,
                 'product_url': response.url,
             }
+
+            # Cache the item
+            self.cache_item(item, response.url)
+            
+            yield item
         else:
             self.logger.error(f'Failed to load page: {response.url} Status: {response.status}')
